@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Filtrar i Descarregar XLSX</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+    <h1>Xlsx per enviar a CTTI (apps i dominis)</h1><br>
+    <input type="file" id="fileInput" accept=".xlsx">
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+
+        fileInput.addEventListener('change', function () {
+            // Comprova si s'ha seleccionat un fitxer
+            if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                const reader = new FileReader();
+
+                reader.onload = function (e) {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array', dateNF: 'yyyy-mm-dd', cellDates: true });
+
+                    // Assumeix que la primera fulla és la que conté les dades
+                    const sheetName = workbook.SheetNames[0];
+                    const sheet = workbook.Sheets[sheetName];
+
+                    // Especifica el rang de files a llegir, començant per la fila 14 fins a l'última fila
+                    const range = XLSX.utils.decode_range(sheet['!ref']);
+                    range.s.r = 13;  // Comença des de la fila 14
+                    sheet['!ref'] = XLSX.utils.encode_range(range);
+
+                    // Obté la capçalera per trobar la posició de la columna "Catàleg d'inventari"
+                    const header = XLSX.utils.sheet_to_json(sheet, { header: 1 })[0];
+                    const columnIndex = header.indexOf("Catàleg d'inventari");
+
+                    // Filtra les files segons la columna "Catàleg d'inventari" amb el valor "Programa d'ordinador"
+                    const filteredData = XLSX.utils.sheet_to_json(sheet, { header: 1 })
+                        .filter(row => row[columnIndex] === "Programa d'ordinador");
+
+                    // Filtra les files segons la columna "Catàleg d'inventari" amb el valor "Nom de domini"
+                    const filteredDataDomini = XLSX.utils.sheet_to_json(sheet, { header: 1 })
+                        .filter(row => row[columnIndex] === "Nom de domini");
+
+                    // Afegeix les capçaleres i filtres a la primera fila sense canviar el format original de les dates
+                    const finalData = [header, ...filteredData];
+                    const finalDataDomini = [header, ...filteredDataDomini];
+
+                    // Crea un nou llibre amb les dades filtrades i les capçaleres
+                    const newWorkbook = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(newWorkbook, XLSX.utils.aoa_to_sheet(finalData), "Programes d'ordinador");
+                    XLSX.utils.book_append_sheet(newWorkbook, XLSX.utils.aoa_to_sheet(finalDataDomini), "Noms de domini");
+
+                    // Obté la data d'avui en el format yyyymmdd
+                    const today = new Date();
+                    const yyyy = today.getFullYear();
+                    const mm = String(today.getMonth() + 1).padStart(2, '0');
+                    const dd = String(today.getDate()).padStart(2, '0');
+                    const currentDate = `${yyyy}${mm}${dd}`;
+
+                    // Crea el nom del fitxer amb la data d'avui
+                    const fileName = `${currentDate} Tramesa dominis i apps a CTTI.xlsx`;
+
+                    // Descarrega el nou fitxer amb el nom que conté la data d'avui
+                    XLSX.writeFile(newWorkbook, fileName);
+                };
+
+                reader.readAsArrayBuffer(file);
+            } else {
+                alert('Si us plau, selecciona un fitxer abans de filtrar i descarregar.');
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Consulta WHOIS de Domini</title>
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+    <script type="text/javascript" src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script type="text/javascript" src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.15.6/xlsx.full.min.js"></script>
+    <script>
+        let fullData; // Variable global
+
+        function convertirDataExcel(dataString) {
+            const [any, mes, dia] = dataString.split("-").map(Number);
+            const dataExcel = new Date(any, mes - 1, dia);
+            const dataExcelNum = (dataExcel - new Date('1899-12-30')) / (24 * 60 * 60 * 1000);
+            return dataExcelNum;
+        }
+
+        function convertirDataExcelANormal(dataExcelNum) {
+            const dataExcel = dataExcelNum - (25567 + 2);
+            const data = new Date(dataExcel * 86400 * 1000);
+            const dia = data.getDate().toString().padStart(2, '0');
+            const mes = (data.getMonth() + 1).toString().padStart(2, '0');
+            const any = data.getFullYear();
+            return `${any}-${mes}-${dia}`;
+        }
+
+        function carregarArxiu() {
+            const input = document.createElement('input');
+            input.type = 'file';
+
+            input.onchange = (e) => {
+                const arxiu = e.target.files[0];
+                const reader = new FileReader();
+
+                reader.onload = (e) => {
+                    const contingutArxiu = e.target.result;
+                    const excel = XLSX.read(contingutArxiu, { type: 'binary' });
+                    const table = $('#resultatTaula').DataTable();
+
+                    // Ara assignem el valor a la variable global
+                    fullData = XLSX.utils.sheet_to_json(excel.Sheets[excel.SheetNames[0]]);
+
+                    fullData.forEach((row) => {
+                        if (row) {
+                            const resultatContenidor = document.createElement("div");
+                            document.body.appendChild(resultatContenidor);
+                            resultatContenidor.id = "resultat-" + row['Domini'];
+                            consultarWHOIS(row['Domini'], resultatContenidor);
+                        }
+                    });
+
+                    table.rows.add([]).draw();
+                    mostrarAvis();
+                };
+
+                reader.readAsBinaryString(arxiu);
+            };
+
+            input.click();
+        }
+
+        async function consultarWHOIS(domini, resultatContenidor) {
+            try {
+                const response = await fetch('https://api.whois.vu/?q=' + domini);
+                const informacioWHOIS = await response.json();
+
+                if (!informacioWHOIS || informacioWHOIS.error) {
+                    throw new Error("Domini inexistent");
+                }
+
+                const disponible = informacioWHOIS.available;
+                const whois = informacioWHOIS.whois;
+                let dataCaducitat = "";
+                let dataCreacio = "";
+                let organitzacioRegistrant = "";
+                let website = "";
+                let estat = "";
+                let idDomini = "";
+                let trobatCreacio = false;
+                let trobatWebsite = false;
+
+                if (whois) {
+                    const linies = whois.split("\n");
+                    linies.forEach(linea => {
+                        if (linea.includes("Registry Expiry Date:")) {
+                            dataCaducitat = linea.split(":")[1].trim().split("T")[0];
+                        }
+                        if (linea.includes("Domain ID:")) {
+                            idDomini = linea.split(":")[1].trim();
+                        }
+                        if (!trobatCreacio && linea.includes("Creation Date:")) {
+                            dataCreacio = linea.split(":")[1].trim().split("T")[0];
+                            trobatCreacio = true;
+                        }
+                        if (linea.includes("Registrant Organization:")) {
+                            organitzacioRegistrant = linea.split(":")[1].trim();
+                        }
+                        if (!trobatWebsite && (linea.includes("Website:") || linea.includes("Registrar URL:"))) {
+                            website = linea.split(": ")[1].trim();
+                            trobatWebsite = true;
+                        }
+                    });
+                }
+
+                // Creació del camp "Estat"
+                if (disponible === "yes") {
+                    estat = "No registrat";
+                } else if (disponible === "incorrect") {
+                    estat = "Nom de domini incorrecte";
+                } else if (dataCaducitat === "") {
+                    estat = "Falta informació";
+                } else {
+                    estat = "Ok";
+                }
+
+                const table = $('#resultatTaula').DataTable();
+                const rowData = [domini, disponible, dataCaducitat.split("-").reverse().join("-"), dataCreacio.split("-").reverse().join("-"), organitzacioRegistrant, website, idDomini, estat];
+
+                // Assegura't que la fila té els elements necessaris
+                while (rowData.length < table.columns().header().length) {
+                    rowData.push("");
+                }
+
+                table.row.add(rowData).draw();
+            } catch (error) {
+                const table = $('#resultatTaula').DataTable();
+                const rowData = [domini, "", "", "", "", "", "", "Domini inexistent"];
+
+                // Assegura't que la fila té els elements necessaris
+                while (rowData.length < table.columns().header().length) {
+                    rowData.push("");
+                }
+
+                table.row.add(rowData).draw();
+                resultatContenidor.innerText = "Error en obtenir la informació WHOIS: " + error.message;
+            }
+        }
+
+        async function mostrarAvis() {
+            const table = $('#resultatTaula').DataTable();
+            let dataCarregada = false;
+
+            while (true) {
+                const totalRegistres = table.rows().count();
+                if (totalRegistres === fullData.length) {
+                    dataCarregada = true;
+                    break;
+                } else {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            }
+
+            const data = table.rows().data().toArray();
+
+            const dataTableJSON = data.map(row => ({
+                Domini: row[0],
+                Disponibilitat: row[1],
+                DataVencimentWhois: row[2],
+                DataCreacioWhois: row[3],
+                OrganitzacioRegistrant: row[4],
+                WebAgent: row[5],
+                idDomini: row[6],
+                Estat: row[7]
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(dataTableJSON);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Dades");
+            XLSX.writeFile(wb, 'dades.xlsx');
+        }
+    </script>
+</head>
+<body>
+    <header>
+        <h1>Comprovació vigència de dominis (whois)</h1>
+    </header>
+    <main>
+        <button onclick="carregarArxiu()">Carregar Arxiu XLSX</button>
+    </main>
+    <br>
+    <div id="resultatContenidor">
+        <table id="resultatTaula" class="display" style="width:100%">
+            <thead>
+                <tr>
+                    <th>Domini</th>
+                    <th>Disponibilitat</th>
+                    <th>Data venciment Whois</th>
+                    <th>Data creació Whois</th>
+                    <th>Organització registrant</th>
+                    <th>Web agent</th>
+                    <th>ID Domini</th>
+                    <th>Estat</th>
+                </tr>
+            </thead>
+        </table>
+    </div>
+</body>
+</html>

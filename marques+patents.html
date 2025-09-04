@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Generador d'URL de Registres de Marques i Patents</title>
+</head>
+<body>
+  <h1>Generador d'URL de Registres de Marques i Patents</h1>
+  
+  <label for="typeSelect">Selecciona el tipus:</label>
+  <select id="typeSelect">
+    <option value="marques">Marques</option>
+    <option value="patents">Patents</option>
+  </select>
+  <br><br>
+
+  <label for="officeSelect">Selecciona una oficina:</label>
+  <select id="officeSelect">
+  </select>
+  <br><br>
+
+  <label for="codeInput">Codi d'identificació registre:</label>
+  <input type="text" id="codeInput">
+  <br><br>
+
+  <button id="generateButton">Generar URL</button><br><br>
+  <div id="resultContainer"></div>
+
+  <script>
+    // Funció per crear i copiar la URL al porta-retalls
+    function copyToClipboard(text) {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+    }
+
+    // Funció per construir la URL
+    function buildURL() {
+      const officeSelect = document.getElementById('officeSelect');
+      const typeSelect = document.getElementById('typeSelect');
+      const codeInput = document.getElementById('codeInput');
+      const resultContainer = document.getElementById('resultContainer');
+
+      const office = officeSelect.value;
+      const type = typeSelect.value;
+      let code = codeInput.value;
+
+      // Elimina els caràcters no numèrics del codi
+      code = code.replace(/\D/g, '');
+
+      // Defineix les URLs base per a cada oficina i tipus
+      const officeURLs = {
+        'OEPM': {
+          'marques': 'https://consultas2.oepm.es/ceo/jsp/busqueda/consultaExterna.xhtml?numExp=M',
+          'patents': 'https://consultas2.oepm.es/ceo/jsp/busqueda/consultaExterna.xhtml?numExp=P',
+        },
+        'EUIPO': {
+          'marques': 'https://euipo.europa.eu/eSearch/#basic/1+1+1+1/100+100+100+100/',
+          'patents': 'https://euipo.europa.eu/eSearch/#basic/1+1+1+1/100+100+100+100/',
+        },
+        'OMPI': {
+          'marques': 'https://branddb.wipo.int/en/quicksearch/brand/WO50000000',
+          'patents': 'https://branddb.wipo.int/en/quicksearch/brand/WO50000000',
+        },
+        'EPO': {
+          'patents': 'https://worldwide.espacenet.com/patent/search?q=EP',
+        }
+      };
+
+      if (officeURLs[office] && officeURLs[office][type]) {
+        const url = officeURLs[office][type] + code;
+        resultContainer.innerHTML = `<a href="${url}" target="_blank">${url}</a>`;
+        copyToClipboard(url);
+      } else {
+        resultContainer.textContent = 'Oficina no vàlida o tipus no vàlid';
+      }
+    }
+
+    // Funció per actualitzar les opcions del desplegable d'oficines segons la selecció de tipus
+    function updateOfficeOptions() {
+      const typeSelect = document.getElementById('typeSelect');
+      const officeSelect = document.getElementById('officeSelect');
+
+      // Defineix les opcions d'oficines basades en la selecció de tipus
+      const officeOptions = {
+        'marques': ['OEPM', 'EUIPO', 'OMPI'],
+        'patents': ['OEPM', 'EUIPO', 'OMPI', 'EPO'],
+      };
+
+      // Elimina les opcions actuals del desplegable d'oficines
+      officeSelect.innerHTML = '';
+
+      // Afegeix les noves opcions basades en la selecció de tipus
+      const type = typeSelect.value;
+      officeOptions[type].forEach((office) => {
+        const option = document.createElement('option');
+        option.value = office;
+        option.text = getOfficeLabel(office);
+        officeSelect.appendChild(option);
+      });
+    }
+
+    // Funció per obtenir les etiquetes d'oficines
+    function getOfficeLabel(office) {
+      const officeLabels = {
+        'OEPM': 'Oficina Espanyola de Patents i Marques (OEPM)',
+        'EUIPO': 'Oficina de Propietat Intel·lectual de la Unió Europea (EUIPO)',
+        'OMPI': 'Organització Mundial de la Propietat Intel·lectual (OMPI)',
+        'EPO': 'Oficina de Patents Europees (EPO)',
+      };
+      return officeLabels[office] || office;
+    }
+
+    // Escolta els esdeveniments de canvi en la selecció de tipus i clic en el botó
+    document.getElementById('typeSelect').addEventListener('change', updateOfficeOptions);
+    document.getElementById('generateButton').addEventListener('click', buildURL);
+
+    // Inicialitza les opcions d'oficines basades en la selecció de tipus inicial
+    updateOfficeOptions();
+  </script>
+</body>
+</html>

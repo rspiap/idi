@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+    <meta charset="UTF-8">
+    <title>Consulta WHOIS de Domini</title>
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+    <script type="text/javascript" src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script type="text/javascript" src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.15.6/xlsx.full.min.js"></script>
+    <script>
+
+        function convertirDataExcel(dataString) {
+            const [any, mes, dia] = dataString.split("-").map(Number);
+            const dataExcel = new Date(any, mes - 1, dia);
+            const dataExcelNum = (dataExcel - new Date('1899-12-30')) / (24 * 60 * 60 * 1000);
+            return dataExcelNum;
+        }
+
+        function convertirDataExcelANormal(dataExcelNum) {
+            const dataExcel = dataExcelNum - (25567 + 2);
+            const data = new Date(dataExcel * 86400 * 1000);
+            const dia = data.getDate().toString().padStart(2, '0');
+            const mes = (data.getMonth() + 1).toString().padStart(2, '0');
+            const any = data.getFullYear();
+            const hora = data.getHours().toString().padStart(2, '0');
+            const minuts = data.getMinutes().toString().padStart(2, '0');
+            const dataAmbHora = `${any}-${mes}-${dia}`;
+            return dataAmbHora;
+        }
+
+        async function carregarArxiu() {
+            const input = document.createElement('input');
+            input.type = 'file';
+
+            return new Promise(resolve => {
+                input.onchange = async (e) => {
+                    const arxiu = e.target.files[0];
+                    const reader = new FileReader();
+
+                    reader.onload = async (e) => {
+                        const contingutArxiu = e.target.result;
+                        const excel = XLSX.read(contingutArxiu, { type: 'array' });
+                        const table = $('#resultatTaula').DataTable();
+
+                        const fullData = XLSX.utils.sheet_to_json(excel.Sheets[excel.SheetNames[0]], {
+                            header: 13,
+                            range: 13
+                        });
+
+                        const excelFiltrat = fullData.filter(row => {
+                            const dataFiVigenciaDret = row["Data fi vigència dret"];
+                            return row["Catàleg d'inventari"] === "Nom de domini" &&
+                                row["Estat"] === "Alta" &&
+                                (row["Estat control de canvis"] === "Càrrega inicial" || row["Estat control de canvis"] === "Modificat per l'usuari") &&
+                                row["Denominació"].includes(".");
+                        });
+
+                        for (const row of excelFiltrat) {
+                            if (row) {
+                                const resultatContenidor = document.createElement("div");
+                                document.body.appendChild(resultatContenidor);
+                                resultatContenidor.id = "resultat-" + row['Denominació'];
+                                const caducitat = convertirDataExcelANormal(row['Data fi vigència dret']);
+                                const creacio = convertirDataExcelANormal(row['Data inici vigència dret']);
+                                const titular = row['Titular (entitat)'] || row['Tipus de titular'];
+                                await consultarWHOIS(row['Denominació'], resultatContenidor, caducitat, creacio, titular, table);
+                            }
+                        }
+
+                        // Espera fins que la taula s'hagi dibuixat completament
+                        await table.draw();
+
+                        // Continua amb la següent etapa
+                        mostrarAvis(table);
+
+                        resolve();
+                    };
+
+                    reader.readAsArrayBuffer(arxiu);
+                };
+
+                input.click();
+            });
+        }
+
+        async function consultarWHOIS(domini, resultatContenidor, caducitat, creacio, titular, table) {
+            try {
+                const response = await fetch('https://api.whois.vu/?q=' + domini);
+                const informacioWHOIS = await response.json();
+                const disponible = informacioWHOIS.available;
+                const whois = informacioWHOIS.whois;
+                let dataCaducitat = "";
+                let dataCreacio = "";
+                let organitzacioRegistrant = "";
+                let website = "";
+                let estat = "";
+                let trobatCreacio = false;
+                let trobatWebsite = false;
+                let trobatDetails = false;
+
+                if (whois) {
+                    const linies = whois.split("\n");
+                    linies.forEach(linea => {
+                        if (linea.includes("Registry Expiry Date:")) {
+                            dataCaducitat = (linea.split(":")[1]?.trim().split("T")[0] ?? "Sense informació");
+                        }
+                        if (!trobatCreacio && linea.includes("Creation Date:")) {
+                            dataCreacio = (linea.split(":")[1]?.trim().split("T")[0] ?? "Sense informació");
+                            trobatCreacio = true;
+                        }
+                        if (linea.includes("Registrant Organization:")) {
+                            organitzacioRegistrant = (linea.split(":")[1]?.trim() ?? "Sense informació");
+                        }
+                        if (!trobatWebsite && (linea.includes("Website:") || linea.includes("Registrar URL:"))) {
+                            website = (linea.split(": ")[1]?.trim() ?? "Sense informació");
+                            trobatWebsite = true;
+                        }
+                        if (!trobatDetails && linea.includes("Details:")) {
+                            website = (linea.split('"')[1]?.trim() ?? "Sense informació");
+                            trobatDetails = true;
+                        }
+                    });
+
+                    if (dataCaducitat.slice(-5) !== caducitat.slice(-5)) {
+                        console.log(domini, dataCaducitat, caducitat);
+                    }
+
+                    // Creació del camp "Estat"
+                    if (convertirDataExcel(dataCreacio) !== convertirDataExcel(creacio) || dataCaducitat.slice(-5) !== caducitat.slice(-5)) {
+                        estat = "Dates no coincidents";
+                    } else {
+                        estat = "Correcte";
+                    }
+                }
+
+                // Assegurar-se que les variables tenen valors per defecte si no s'han trobat
+                dataCaducitat = dataCaducitat || "Sense informació";
+                dataCreacio = dataCreacio || "Sense informació";
+                organitzacioRegistrant = organitzacioRegistrant || "Sense informació";
+                website = website || "Sense informació";
+                titular = titular || "Sense informació";
+
+                if (typeof titular === 'undefined') {
+                    console.error("Titular indefinit per a:", domini);
+                }
+                if (typeof disponible === 'undefined') {
+                    console.error("Disponible indefinit per a:", domini);
+                }
+                if (typeof estat === 'undefined') {
+                    console.error("Estat indefinit per a:", domini);
+                }
+
+                const rowData = [domini, titular, disponible, dataCaducitat.split("-").reverse().join("-"), caducitat.split("-").reverse().join("-"), dataCreacio.split("-").reverse().join("-"), creacio.split("-").reverse().join("-"), organitzacioRegistrant, website, estat];
+
+                table.row.add(rowData).draw();
+            } catch (error) {
+                console.error(error);
+                resultatContenidor.innerText = "Error en obtenir la informació WHOIS.";
+            }
+        }
+
+        async function mostrarAvis(table) {
+            const data = table.rows().data().toArray();
+
+            const dataTableJSON = data.map(row => ({
+                Domini: row[0],
+                Titular: row[1],
+                Disponibilitat: row[2],
+                DataVencimentWhois: row[3],
+                DataVencimentGPG: row[4],
+                DataCreacioWhois: row[5],
+                DataCreacioGPG: row[6],
+                OrganitzacioRegistrant: row[7],
+                WebAgent: row[8],
+                Estat: row[9]
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(dataTableJSON);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Dades");
+
+            // Enfoca la taula abans de descarregar l'Excel
+            $('#resultatTaula').DataTable().columns.adjust().draw();
+
+            // Descarrega l'excel
+            XLSX.writeFile(wb, 'dades.xlsx');
+        }
+
+    </script>
+</head>
+<body>
+    <header>
+        <h1>Comprovació vigència de dominis (whois)</h1>
+    </header>
+    <main>
+        <button onclick="carregarArxiu()">Carregar Arxiu XLSX</button>
+    </main>
+    <br>
+    <div id="resultatContenidor">
+        <table id="resultatTaula" class="display" style="width:100%">
+            <thead>
+                <tr>
+                    <th>Domini</th>
+                    <th>Titular</th>
+                    <th>Disponibilitat</th>
+                    <th>Data venciment Whois</th>
+                    <th>Data venciment GPG</th>
+                    <th>Data creació Whois</th>
+                    <th>Data creació GPG</th>
+                    <th>Organització registrant</th>
+                    <th>Web agent</th>
+                    <th>Estat</th>
+                </tr>
+            </thead>
+        </table>
+    </div>
+</body>
+</html>
