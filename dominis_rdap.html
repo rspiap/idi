@@ -131,7 +131,7 @@
         </div>
     </div>
 
-    <!-- Libraries JS (At the bottom to avoid ReferenceError: $ is not defined) -->
+    <!-- Libraries JS (At the bottom + Polling for GitHub Previewers) -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -142,25 +142,45 @@
         let processedCount = 0;
         let table;
 
-        // Ensure everything is ready before using $
-        $(document).ready(function () {
-            table = $('#resultatTaula').DataTable({
-                pageLength: 25,
-                columnDefs: [{ targets: 8, render: d => `<span class="status-badge ${d === 'OK' || d === 'Renovat' ? 'bg-alta' : 'bg-caducat'}">${d}</span>` }]
-            });
+        // SISTEMA ANTIBLOQUEIG: Espera que jQuery i DataTables estiguin carregats
+        function waitForLibraries() {
+            if (typeof jQuery === 'undefined' || typeof XLSX === 'undefined' || !jQuery.fn.DataTable) {
+                console.log("Esperant llibreries (jQuery/XLSX/DataTable)...");
+                setTimeout(waitForLibraries, 250);
+                return;
+            }
+            initApp();
+        }
 
-            document.getElementById('fileInput').addEventListener('change', function (e) {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = function (event) {
-                    const workbook = XLSX.read(new Uint8Array(event.target.result), { type: 'array' });
-                    const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
-                    processExcel(jsonData);
-                };
-                reader.readAsArrayBuffer(file);
+        function initApp() {
+            console.log("Llibreries carregades. Inicialitzant App...");
+            
+            $(document).ready(function () {
+                table = $('#resultatTaula').DataTable({
+                    pageLength: 25,
+                    columnDefs: [{ targets: 8, render: d => `<span class="status-badge ${d === 'OK' || d === 'Renovat' ? 'bg-alta' : 'bg-caducat'}">${d}</span>` }]
+                });
+
+                document.getElementById('fileInput').addEventListener('change', function (e) {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = function (event) {
+                        try {
+                            const workbook = XLSX.read(new Uint8Array(event.target.result), { type: 'array' });
+                            const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+                            processExcel(jsonData);
+                        } catch(err) {
+                            alert("Error llegint l'Excel: " + err.message);
+                        }
+                    };
+                    reader.readAsArrayBuffer(file);
+                });
             });
-        });
+        }
+
+        // Llançament amb espera (per a HTMLPreview / GitHub)
+        waitForLibraries();
 
         function excelDateToJS(s) { return (s && !isNaN(s)) ? new Date(EXCEL_EPOCH.getTime() + s * 86400000) : null; }
         function formatDate(d) { if (!d) return "--"; return d.getDate().toString().padStart(2, '0') + '-' + (d.getMonth() + 1).toString().padStart(2, '0') + '-' + d.getFullYear(); }
