@@ -131,170 +131,168 @@
         </div>
     </div>
 
-    <!-- Libraries JS (At the bottom + Polling for GitHub Previewers) -->
+    <!-- Libraries JS (Sequential Loading) -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
     <script>
-        const EXCEL_EPOCH = new Date(1899, 11, 30);
-        let domainQueue = [];
-        let processedCount = 0;
-        let table;
+        (function() {
+            const EXCEL_EPOCH = new Date(1899, 11, 30);
+            let domainQueue = [];
+            let processedCount = 0;
+            let table;
 
-        // SISTEMA ANTIBLOQUEIG: Espera que jQuery i DataTables estiguin carregats
-        function waitForLibraries() {
-            if (typeof jQuery === 'undefined' || typeof XLSX === 'undefined' || !jQuery.fn.DataTable) {
-                console.log("Esperant llibreries (jQuery/XLSX/DataTable)...");
-                setTimeout(waitForLibraries, 250);
-                return;
-            }
-            initApp();
-        }
-
-        function initApp() {
-            console.log("Llibreries carregades. Inicialitzant App...");
-            
-            $(document).ready(function () {
-                table = $('#resultatTaula').DataTable({
-                    pageLength: 25,
-                    columnDefs: [{ targets: 8, render: d => `<span class="status-badge ${d === 'OK' || d === 'Renovat' ? 'bg-alta' : 'bg-caducat'}">${d}</span>` }]
-                });
-
-                document.getElementById('fileInput').addEventListener('change', function (e) {
-                    const file = e.target.files[0];
-                    if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = function (event) {
-                        try {
-                            const workbook = XLSX.read(new Uint8Array(event.target.result), { type: 'array' });
-                            const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
-                            processExcel(jsonData);
-                        } catch(err) {
-                            alert("Error llegint l'Excel: " + err.message);
-                        }
-                    };
-                    reader.readAsArrayBuffer(file);
-                });
-            });
-        }
-
-        // Llançament amb espera (per a HTMLPreview / GitHub)
-        waitForLibraries();
-
-        function excelDateToJS(s) { return (s && !isNaN(s)) ? new Date(EXCEL_EPOCH.getTime() + s * 86400000) : null; }
-        function formatDate(d) { if (!d) return "--"; return d.getDate().toString().padStart(2, '0') + '-' + (d.getMonth() + 1).toString().padStart(2, '0') + '-' + d.getFullYear(); }
-
-        function processExcel(jsonData) {
-            let hdrIdx = 9;
-            const keys = ['denominació', 'domini', 'domain'];
-            for (let i = 0; i < Math.min(jsonData.length, 50); i++) {
-                if (jsonData[i].some(c => keys.some(k => String(c).toLowerCase().includes(k)))) { hdrIdx = i; break; }
-            }
-
-            const headers = jsonData[hdrIdx] || [];
-            const dataRows = jsonData.slice(hdrIdx + 1);
-            const findCol = ts => headers.findIndex(h => ts.some(t => String(h || "").toLowerCase().replace(/\s/g, '').includes(t)));
-
-            const col = {
-                name: findCol(['denominació', 'domini', 'domain']),
-                titular: findCol(['titular', 'entitat']),
-                manager: findCol(['gestio', 'ctti']),
-                expiry: findCol(['fi vigència', 'venciment', 'expiry']),
-                start: findCol(['inici vigència', 'creació', 'start'])
-            };
-
-            const filtersEnabled = document.getElementById('filtreCTTI').checked;
-            domainQueue = dataRows.filter(row => {
-                const n = String(row[col.name] || "").trim();
-                const m = col.manager !== -1 ? String(row[col.manager]).toLowerCase() : "";
-                if (n.length < 4) return false;
-                if (filtersEnabled && !m.includes('si')) return false;
-                row._meta = { name: n, titular: row[col.titular], expiry: row[col.expiry], start: row[col.start] };
-                return true;
-            });
-
-            if (domainQueue.length === 0) {
-                alert("No s'han trobat dominis. Revisa la fila de capçaleres.");
-                mostrarInspector(jsonData);
-                return;
-            }
-            startProcess();
-        }
-
-        async function startProcess() {
-            processedCount = 0;
-            table.clear().draw();
-            document.getElementById('progressOverlay').style.display = 'flex';
-            document.getElementById('statTotal').innerText = domainQueue.length;
-
-            for (let row of domainQueue) {
-                await validateDomain(row);
-                await new Promise(r => setTimeout(r, 2000)); // Sleep 2s
-            }
-            document.getElementById('progressOverlay').style.display = 'none';
-            document.getElementById('btnExport').style.display = 'block';
-        }
-
-        async function validateDomain(row) {
-            const m = row._meta;
-            let d = null;
-            const proxies = [
-                u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
-                u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-                u => u
-            ];
-
-            for (let p of proxies) {
-                try {
-                    const resp = await fetch(p(`https://rdap.org/domain/${m.name}`));
-                    if (resp.ok) {
-                        const raw = await resp.json();
-                        d = (typeof raw.contents === 'string') ? JSON.parse(raw.contents) : raw;
-                        if (d && d.events) break;
-                    }
-                } catch(e) {}
-            }
-
-            let exp = null, registrar = "--", status = "--", res = "Error";
-            if (d) {
-                const ev = (d.events || []).find(e => e.eventAction === 'expiration');
-                if (ev) exp = new Date(ev.eventDate);
-                status = (d.status || []).join(',');
-                if (d.entities) {
-                    const reg = d.entities.find(e => e.roles && e.roles.includes('registrar'));
-                    if (reg && reg.vcardArray) registrar = reg.vcardArray[1].find(a => a[0] === 'fn')[3];
+            // SISTEMA NATIVO DE ESPERA (CORS & GITHUB PREVIEW PROOF)
+            const checkLibs = setInterval(function() {
+                if (typeof window.jQuery !== 'undefined' && typeof window.XLSX !== 'undefined' && window.jQuery.fn.DataTable) {
+                    clearInterval(checkLibs);
+                    initApp();
                 }
+            }, 100);
+
+            function initApp() {
+                const $ = window.jQuery;
+                console.log("Llibreries detectades correctament. Inicialitzant...");
+                
+                $(document).ready(function () {
+                    table = $('#resultatTaula').DataTable({
+                        pageLength: 25,
+                        columnDefs: [{ targets: 8, render: d => `<span class="status-badge ${d === 'OK' || d === 'Renovat' ? 'bg-alta' : 'bg-caducat'}">${d}</span>` }]
+                    });
+
+                    document.getElementById('fileInput').addEventListener('change', function (e) {
+                        const file = e.target.files[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = function (event) {
+                            try {
+                                const workbook = XLSX.read(new Uint8Array(event.target.result), { type: 'array' });
+                                const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+                                processExcel(jsonData);
+                            } catch(err) { alert("Error XLSX: " + err.message); }
+                        };
+                        reader.readAsArrayBuffer(file);
+                    });
+                });
             }
 
-            const excelExp = excelDateToJS(m.expiry);
-            if (exp && excelExp) {
-                if ((exp - excelExp) > 86400000) res = "Renovat";
-                else if (exp < new Date()) res = "Caducat";
-                else res = "OK";
-            } else if (d) {
-                res = "OK (Incert)";
+            function excelDateToJS(s) { return (s && !isNaN(s)) ? new Date(EXCEL_EPOCH.getTime() + s * 86400000) : null; }
+            function formatDate(d) { if (!d) return "--"; return d.getDate().toString().padStart(2, '0') + '-' + (d.getMonth() + 1).toString().padStart(2, '0') + '-' + d.getFullYear(); }
+
+            function processExcel(jsonData) {
+                let hdrIdx = 9; // Fila 10 segons la teva indicació
+                const keys = ['denominació', 'domini', 'domain'];
+                for (let i = 0; i < Math.min(jsonData.length, 50); i++) {
+                    if (jsonData[i] && jsonData[i].some(c => keys.some(k => String(c).toLowerCase().includes(k)))) { hdrIdx = i; break; }
+                }
+
+                const headers = jsonData[hdrIdx] || [];
+                const dataRows = jsonData.slice(hdrIdx + 1);
+                const findCol = ts => headers.findIndex(h => ts.some(t => String(h || "").toLowerCase().replace(/\s/g, '').includes(t)));
+
+                const col = {
+                    name: findCol(['denominació', 'domini', 'domain']),
+                    titular: findCol(['titular', 'entitat']),
+                    manager: findCol(['gestio', 'ctti']),
+                    expiry: findCol(['fi vigència', 'venciment', 'expiry']),
+                    start: findCol(['inici vigència', 'creació', 'start'])
+                };
+
+                const filtersEnabled = document.getElementById('filtreCTTI').checked;
+                domainQueue = dataRows.filter(row => {
+                    const n = String(row[col.name] || "").trim();
+                    const m = col.manager !== -1 ? String(row[col.manager]).toLowerCase() : "";
+                    if (n.length < 4) return false;
+                    if (filtersEnabled && !m.includes('si')) return false;
+                    row._meta = { name: n, titular: row[col.titular], expiry: row[col.expiry], start: row[col.start] };
+                    return true;
+                });
+
+                if (domainQueue.length === 0) {
+                    mostrarInspector(jsonData);
+                    alert("No s'han trobat dominis vàlids. Revisa l'inspector a sota.");
+                    return;
+                }
+                document.getElementById('inspectorContainer').style.display = 'none';
+                startProcess();
             }
 
-            table.row.add([m.name, m.titular, status, formatDate(exp), formatDate(excelExp), "--", formatDate(excelDateToJS(m.start)), registrar, res]).draw(false);
-            processedCount++;
-            document.getElementById('progressBarFill').style.width = (processedCount / domainQueue.length * 100) + '%';
-            document.getElementById('statValid').innerText = processedCount;
-        }
+            function mostrarInspector(data) {
+                const ins = document.getElementById('inspeccioTaula');
+                document.getElementById('inspectorContainer').style.display = 'block';
+                ins.innerHTML = data.slice(0, 30).map((r, i) => `<div style="border-bottom:1px solid #333; padding:2px;"><b>Fila ${i}:</b> ${r.slice(0, 8).join(' | ')}</div>`).join('');
+                window.scrollTo(0, document.body.scrollHeight);
+            }
 
-        function mostrarInspector(data) {
-            const ins = document.getElementById('inspeccioTaula');
-            document.getElementById('inspectorContainer').style.display = 'block';
-            ins.innerHTML = data.slice(0, 20).map((r, i) => `<div><b>${i}:</b> ${r.slice(0, 10).join(' | ')}</div>`).join('');
-        }
+            async function startProcess() {
+                const $ = window.jQuery;
+                processedCount = 0;
+                table.clear().draw();
+                document.getElementById('progressOverlay').style.display = 'flex';
+                document.getElementById('statTotal').innerText = domainQueue.length;
 
-        document.getElementById('btnExport').onclick = function () {
-            let csv = "Domini,Titular,Estat,Fi Real,Fi Excel,Registrar,Resultat\n";
-            table.rows().data().toArray().forEach(r => { csv += r.join(',') + "\n"; });
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'resultats.csv'; a.click();
-        };
+                for (let row of domainQueue) {
+                    await validateDomain(row);
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+                document.getElementById('progressOverlay').style.display = 'none';
+                document.getElementById('btnExport').style.display = 'block';
+                alert("Procés finalitzat.");
+            }
 
+            async function validateDomain(row) {
+                const m = row._meta;
+                let d = null;
+                const proxies = [
+                    u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+                    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+                    u => u
+                ];
+
+                for (let p of proxies) {
+                    try {
+                        const resp = await fetch(p(`https://rdap.org/domain/${m.name}`));
+                        if (resp.ok) {
+                            const raw = await resp.json();
+                            d = (typeof raw.contents === 'string') ? JSON.parse(raw.contents) : raw;
+                            if (d && (d.events || d.status)) break;
+                        }
+                    } catch(e) {}
+                }
+
+                let exp = null, registrar = "--", status = "--", res = "Incert";
+                if (d) {
+                    const ev = (d.events || []).find(e => e.eventAction === 'expiration');
+                    if (ev) exp = new Date(ev.eventDate);
+                    status = (d.status || []).join(',');
+                    if (d.entities) {
+                        const reg = d.entities.find(e => e.roles && e.roles.includes('registrar'));
+                        if (reg && reg.vcardArray) registrar = reg.vcardArray[1].find(a => a[0] === 'fn')[3];
+                    }
+                }
+
+                const excelExp = excelDateToJS(m.expiry);
+                if (exp && excelExp) {
+                    if ((exp - excelExp) > 86450000) res = "Renovat";
+                    else if (exp < new Date()) res = "Caducat";
+                    else res = "OK";
+                } else if (d) { res = "Trobat (Review)"; } else { res = "Error Xarxa"; }
+
+                table.row.add([m.name, m.titular||"--", status, formatDate(exp), formatDate(excelExp), "--", formatDate(excelDateToJS(m.start)), registrar, res]).draw(false);
+                processedCount++;
+                document.getElementById('progressBarFill').style.width = (processedCount / domainQueue.length * 100) + '%';
+                document.getElementById('statValid').innerText = processedCount;
+            }
+
+            document.getElementById('btnExport').onclick = function () {
+                let csv = "Domini,Titular,Estat,Fi Real,Fi Excel,Registrar,Resultat\n";
+                table.rows().data().toArray().forEach(r => { csv += r.join(',') + "\n"; });
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'resultats_validador.csv'; a.click();
+            };
+        })();
     </script>
 </body>
+
 </html>
